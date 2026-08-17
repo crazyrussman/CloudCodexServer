@@ -24,14 +24,19 @@ RestartSec=5
 #   /etc/caddy    — правит Caddyfile (иначе EROFS и смена пароля падает)
 #   /root         — пишет codex-usage-credentials.txt
 #   /run/systemd  — `systemctl reload caddy` ходит в /run/systemd/private
-# ProtectHome=no обязателен: codex-usage-report.py читает ~/.codex/sessions всех
-# пользователей, а под ProtectHome=yes каталог /home виден пустым — дашборд
-# молча теряет свежие часы и показывает только данные из ledger.
-# ProtectHome=read-only не подходит: он перекрывает ReadWritePaths=/root.
+# /home нужен только на чтение (codex-usage-report.py читает ~/.codex/sessions
+# всех пользователей) — поэтому ReadOnlyPaths=/home, а не ProtectHome.
+#
+# Почему не ProtectHome=read-only, что выглядело бы аккуратнее: измерено на
+# systemd 255 — ReadWritePaths вырезает каталог из-под ProtectSystem=strict
+# (/etc/caddy пишется), но НЕ из-под ProtectHome=read-only: запись в /root
+# падает с EROFS. Документация читается иначе, поведение — такое; при смене
+# версии systemd стоит перепроверить, прежде чем «ужесточать» обратно.
 NoNewPrivileges=no
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=no
+ReadOnlyPaths=/home
 ReadWritePaths=/var/lib/codex-usage /etc/caddy /root /run/systemd
 
 [Install]

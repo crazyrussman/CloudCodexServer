@@ -1,5 +1,7 @@
 {
-	email admin@example.com
+	# ACME-контакт. Заменить на рабочую почту: example.com зарезервирован
+	# RFC 2606, ZeroSSL (запасной УЦ Caddy) такой адрес отвергает.
+	email __ACME_EMAIL__
 }
 
 codex.example.com {

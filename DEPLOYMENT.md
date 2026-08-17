@@ -35,10 +35,11 @@ EOF
 sshd -t && systemctl reload ssh
 ```
 
-Локально в `~/.ssh/config`:
+Локально в `~/.ssh/config` (`codex-server-root` — произвольное имя, дальше по
+тексту оно обозначено как `<SERVER>`):
 ```
-Host <SERVER>
-    HostName SERVER_IP
+Host codex-server-root
+    HostName <SERVER_IP>
     User root
     IdentityFile ~/.ssh/codex_server
     IdentitiesOnly yes
@@ -348,6 +349,7 @@ chmod 600 /etc/codex-usage-account.env
 ```bash
 sed 's/codex\.example\.com/<ВАШ_ДОМЕН>/' /tmp/server-scripts/Caddyfile.codex-usage \
   > /etc/caddy/Caddyfile
+sed -i 's|__ACME_EMAIL__|<ПОЧТА_ДЛЯ_ACME>|' /etc/caddy/Caddyfile
 # заменить плейсхолдер __HASH_admin__ настоящим хешем
 caddy hash-password --plaintext '<ПАРОЛЬ_АДМИНА>'      # скопировать вывод
 sed -i 's|__HASH_admin__|<ВСТАВИТЬ_ХЕШ>|' /etc/caddy/Caddyfile
@@ -389,8 +391,9 @@ EOF
 Домен и ACME-почта задаются окружением — без них генератор откажется работать,
 чтобы не прописать заведомо нерабочий контакт (`example.com` зарезервирован
 RFC 2606 и отвергается ZeroSSL, запасным удостоверяющим центром Caddy).
-`USAGE_ADMIN` нужен в трёх местах: env сервиса (шаг 2), `codex-usage-cron.sh`
-и запуск генератора. Администратор — только он видит имена и проекты, остальным общий борд
+`USAGE_ADMIN` задаётся **в одном месте** — env-файле сервиса (шаг 2): оттуда его
+читают и сам сервис, и `codex-usage-cron.sh`. В скрипт его вписывать не нужно и
+вредно: он лежит в `/usr/local/sbin` и будет перезаписан при обновлении. Администратор — только он видит имена и проекты, остальным общий борд
 отдаётся обезличенным. Логины заводятся командой `codex-usage-passwd <логин>`;
 пароль можно передать через stdin (`codex-usage-passwd ivan --stdin`), чтобы он не
 светился в `ps aux`.

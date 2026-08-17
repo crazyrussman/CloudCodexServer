@@ -9,7 +9,9 @@ CF = "/etc/caddy/Caddyfile"
 DOMAIN = os.environ.get("USAGE_DOMAIN", "")
 ACME_EMAIL = os.environ.get("ACME_EMAIL", "")
 ENV = "/etc/codex-usage-account.env"
-ACCPORT = "8781"
+# Порт берётся из того же env-файла, что читает сам сервис, иначе правка порта
+# в env даёт reverse_proxy в никуда и 502 на /account.
+ACCPORT = ""  # заполняется ниже, после чтения env
 # Логин администратора дашборда: только он видит имена и проекты.
 ADMIN = os.environ.get("USAGE_ADMIN", "admin")
 
@@ -31,6 +33,7 @@ if not DOMAIN or not ACME_EMAIL:
     )
 
 SECRET = read_env("X_AUTH_TOKEN")
+ACCPORT = read_env("ACCOUNT_PORT") or "8781"
 txt = open(CF, encoding="utf-8").read()
 auth = [(m.group(1), m.group(2)) for ln in txt.split("\n")
         for m in [re.match(r"^\s+(\S+)\s+(\$2\S+)\s*$", ln)] if m]
