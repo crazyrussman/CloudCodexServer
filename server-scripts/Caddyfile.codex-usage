@@ -1,0 +1,61 @@
+{
+	email admin@example.com
+}
+
+codex.example.com {
+	root * /var/www/codex-usage
+	encode gzip
+
+	log {
+		output file /var/log/caddy/codex-usage.log
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# --- аутентификация: логины = системные имена, пароли bcrypt ---
+	# ВНИМАНИЕ: хеши подставляются генератором (см. deploy). Плейсхолдеры ниже.
+	basic_auth {
+		# По одной строке на сотрудника. Логин = системное имя, хеш bcrypt
+		# подставляет генератор codex-usage-caddyfile.py — руками не править.
+		admin      __HASH_admin__
+		coder      __HASH_coder__
+		# ivan     __HASH_ivan__
+	}
+
+	# --- «Мой расход»: /me → своя страница по личности из basic_auth ---
+	@me path /me /me/
+	handle @me {
+		route {
+			rewrite * /private/u/{http.auth.user.id}/index.html
+			file_server
+		}
+	}
+
+	# --- Админка: только администратор дашборда, остальным 403 ---
+	@admin path /admin /admin/
+	handle @admin {
+		route {
+			@denied expression {http.auth.user.id} != "admin"
+			respond @denied "403 — доступ только у администратора" 403
+			rewrite * /private/admin/index.html
+			file_server
+		}
+	}
+
+	# --- прямой доступ к /private/* запрещён (страховка) ---
+	@private path /private/*
+	handle @private {
+		respond "403 Forbidden" 403
+	}
+
+	# --- общий дашборд для всех ---
+	handle {
+		file_server
+	}
+}

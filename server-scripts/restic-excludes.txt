@@ -1,0 +1,19 @@
+# Исключения из бэкапа — крупные, легко восстановимые из манифестов каталоги.
+# (восстанавливаются командами npm install / composer install / pip install)
+node_modules
+vendor
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.cache
+.gradle
+.next/cache
+venv-whisper
+# профили/кэш браузеров в ~/.config (регенерируемые)
+/home/*/.config/google-chrome
+/home/*/.config/google-chrome-for-testing
+/home/*/.config/google-chrome-beta
+/home/*/.config/chromium
