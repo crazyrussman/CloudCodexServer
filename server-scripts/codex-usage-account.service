@@ -26,6 +26,9 @@ RestartSec=5
 #   /run/systemd  — `systemctl reload caddy` ходит в /run/systemd/private
 # /home нужен только на чтение (codex-usage-report.py читает ~/.codex/sessions
 # всех пользователей) — поэтому ReadOnlyPaths=/home, а не ProtectHome.
+# Строка НЕ избыточна, хотя выглядит так: ProtectSystem=strict сам по себе делает
+# иерархию read-only, но ProtectHome=no перебивает это для домашних каталогов —
+# измерено на systemd 255: без ReadOnlyPaths запись в /home проходит.
 #
 # Почему не ProtectHome=read-only, что выглядело бы аккуратнее: измерено на
 # systemd 255 — ReadWritePaths вырезает каталог из-под ProtectSystem=strict

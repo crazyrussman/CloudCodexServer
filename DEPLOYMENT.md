@@ -331,16 +331,22 @@ install -d -m700 -o caddy -g caddy /var/www/codex-usage
 **2. Окружение сервиса «Аккаунт».** Генератор добавит роут `/account`, только
 если этот файл существует. `USAGE_ADMIN` обязателен именно здесь — сервис читает
 его отсюда; без него администратором будет считаться логин `admin`, форма сброса
-паролей не покажется, а `/api/usage?view=admin` вернёт 403 настоящему админу:
+паролей не покажется, а `/api/usage?view=admin` вернёт 403 настоящему админу.
+
+⚠️ Впишите логин **значением переменной**, а не угловыми скобками. Файл читают
+два разных парсера: systemd принимает любую строку буквально (сервис поднимется
+с логином `<логин_админа>` и приёмка пройдёт), а разбор в `codex-usage-cron.sh`
+на заготовке остановится с ошибкой — почасовая регенерация встанет молча:
 ```bash
 umask 077
-cat > /etc/codex-usage-account.env <<'EOF'
-X_AUTH_TOKEN=ЗАМЕНИТЬ
+ADMIN_LOGIN=admin        # <-- впишите логин администратора дашборда
+cat > /etc/codex-usage-account.env <<EOF
+X_AUTH_TOKEN=$(openssl rand -hex 24)
 ACCOUNT_PORT=8781
-USAGE_ADMIN=<логин_админа>
+USAGE_ADMIN=$ADMIN_LOGIN
 EOF
-sed -i "s|^X_AUTH_TOKEN=.*|X_AUTH_TOKEN=$(openssl rand -hex 24)|" /etc/codex-usage-account.env
 chmod 600 /etc/codex-usage-account.env
+grep -v '^X_AUTH_TOKEN=' /etc/codex-usage-account.env   # проверьте, что логин подставился
 ```
 
 **3. Стартовый Caddyfile.** Генератор не создаёт конфиг с нуля — он *правит*
@@ -403,6 +409,9 @@ RFC 2606 и отвергается ZeroSSL, запасным удостовер�
 curl -s -o /dev/null -w '%{http_code}\n' https://<ВАШ_ДОМЕН>/     # 401 — basic-auth жив
 curl -s -u <логин>:<пароль> https://<ВАШ_ДОМЕН>/ | head -5         # HTML борда
 sudo -u <любой_сотрудник> test -r /etc/caddy/Caddyfile && echo 'ОПАСНО: читает' || echo 'ок'
+/usr/local/sbin/codex-usage-cron.sh && echo 'регенерация прошла'   # ловит незаданный USAGE_ADMIN
+id "$(sed -n 's/^USAGE_ADMIN=//p' /etc/codex-usage-account.env)" >/dev/null \
+  && echo 'админ дашборда — существующая учётка'
 ```
 
 ⚠️ Дашборд — **прокси по логам, а не биллинг**, и проект определяется по рабочему
