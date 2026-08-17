@@ -15,7 +15,7 @@ venv-whisper
 # рабочие снимки Caddyfile от codex-usage-passwd: полная копия с bcrypt-хешами
 # всех логинов и токеном сервиса. Живут минуты, но если /etc/caddy когда-нибудь
 # попадёт в бэкап — секретам там не место.
-Caddyfile.bak-passwd.*
+Caddyfile.bak-passwd*
 # профили/кэш браузеров в ~/.config (регенерируемые)
 /home/*/.config/google-chrome
 /home/*/.config/google-chrome-for-testing
