@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 #  Настройка ПК (Windows) для подключения к серверу Codex
 #  Пользователь: __USER__
 #  Обычно запускается двойным кликом по файлу УСТАНОВКА.bat
@@ -83,10 +83,45 @@ if ($codeCmd) {
     Write-Host "VSCode не найден - поставьте расширение Remote-SSH вручную из VSCode." -ForegroundColor Yellow
 }
 
-# 6. Проверка подключения
+# 6. Отпечаток сервера. Если он положен в комплект (known_host.txt), первое
+#    подключение проверяется по нему, а не принимается на веру.
+$KnownSrc  = Join-Path $ScriptDir "known_host.txt"
+$KnownDst  = Join-Path $SshDir "known_hosts"
+$StrictArg = "accept-new"
+if (Test-Path $KnownSrc) {
+    $line = ((Get-Content $KnownSrc -Raw) -replace "`r", "").Trim()
+    $have = $false
+    if (Test-Path $KnownDst) {
+        if ((Get-Content $KnownDst -Raw) -match [regex]::Escape($line)) { $have = $true }
+    }
+    if (-not $have) { Add-Content -Path $KnownDst -Value $line -Encoding ascii }
+    $StrictArg = "yes"
+    Write-Host "Отпечаток сервера взят из комплекта (known_host.txt)"
+} else {
+    Write-Host "В комплекте нет known_host.txt - сервер принимается на доверии при первом подключении" -ForegroundColor Yellow
+}
+
+# 7. Проверка подключения
 Write-Host ""
 Write-Host "== Проверяю подключение ==" -ForegroundColor Cyan
-ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 codex-server "echo OK_CONNECTED as __USER__"
+if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
+    Write-Host "В системе нет команды ssh. Включите компонент: Параметры -> Приложения ->" -ForegroundColor Red
+    Write-Host "Дополнительные компоненты -> Клиент OpenSSH, затем запустите установку заново." -ForegroundColor Red
+    exit 1
+}
+ssh -o StrictHostKeyChecking=$StrictArg -o ConnectTimeout=15 codex-server "echo OK_CONNECTED as __USER__"
+$rc = $LASTEXITCODE      # PowerShell НЕ бросает исключение на ненулевой код нативной команды
 
 Write-Host ""
-Write-Host "Готово. В VSCode: F1 -> Remote-SSH: Connect to Host -> codex-server" -ForegroundColor Green
+if ($rc -eq 0) {
+    Write-Host "Готово. В VSCode: F1 -> Remote-SSH: Connect to Host -> codex-server" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "ТЕПЕРЬ УДАЛИТЕ ЭТУ ПАПКУ." -ForegroundColor Yellow
+    Write-Host "Ключ уже скопирован в $KeyDst. Оставшийся комплект - это второй экземпляр" -ForegroundColor Yellow
+    Write-Host "пароля от сервера: во Входящих, в Загрузках, на флешке." -ForegroundColor Yellow
+} else {
+    Write-Host "Подключиться не удалось (код возврата $rc)." -ForegroundColor Red
+    Write-Host "Что проверить: интернет; что ключ отдали именно вам; что имя пользователя верное." -ForegroundColor Red
+    Write-Host "Если просит пароль - ключ не принят: покажите этот вывод администратору." -ForegroundColor Red
+    exit $rc
+}

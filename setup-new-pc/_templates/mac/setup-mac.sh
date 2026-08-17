@@ -60,17 +60,35 @@ else
     echo "(значок Extensions слева -> поиск 'Remote - SSH' -> Install)."
 fi
 
-# 5. Проверка подключения (не прерываем скрипт при ошибке)
+# 5. Отпечаток сервера. Если он положен в комплект (known_host.txt), первое
+#    подключение проверяется по нему, а не принимается на веру.
+STRICT="accept-new"
+if [ -f "$SCRIPT_DIR/known_host.txt" ]; then
+    LINE="$(tr -d '\r' < "$SCRIPT_DIR/known_host.txt" | sed '/^[[:space:]]*$/d')"
+    touch "$SSH_DIR/known_hosts"; chmod 600 "$SSH_DIR/known_hosts"
+    grep -qxF "$LINE" "$SSH_DIR/known_hosts" 2>/dev/null || echo "$LINE" >> "$SSH_DIR/known_hosts"
+    STRICT="yes"
+    echo "Отпечаток сервера взят из комплекта (known_host.txt)"
+else
+    echo "В комплекте нет known_host.txt — сервер принимается на доверии при первом подключении"
+fi
+
+# 6. Проверка подключения (не прерываем скрипт при ошибке)
 echo
 echo "== Проверяю подключение =="
 set +e
-ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 codex-server "echo OK_CONNECTED as __USER__"
+ssh -o StrictHostKeyChecking="$STRICT" -o ConnectTimeout=15 codex-server "echo OK_CONNECTED as __USER__"
 RESULT=$?
 set -e
 echo
 if [ $RESULT -eq 0 ]; then
     echo "Готово! В VSCode: F1 (или Cmd+Shift+P) -> Remote-SSH: Connect to Host -> codex-server"
+    echo
+    echo "ТЕПЕРЬ УДАЛИТЕ ЭТУ ПАПКУ."
+    echo "Ключ уже скопирован в $KEY_DST. Оставшийся комплект — это второй экземпляр"
+    echo "пароля от сервера: в почте, в Загрузках, на флешке."
 else
-    echo "Подключиться не удалось. Проверьте интернет и повторите запуск."
+    echo "Подключиться не удалось (код возврата $RESULT). Проверьте интернет и повторите запуск."
     echo "Если просит пароль — выполните: chmod 600 ~/.ssh/__KEYNAME__  и запустите снова."
+    exit $RESULT
 fi

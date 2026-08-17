@@ -42,5 +42,19 @@ ProtectHome=no
 ReadOnlyPaths=/home
 ReadWritePaths=/var/lib/codex-usage /etc/caddy /root /run/systemd
 
+# Потолок ресурсов. ВАЖНО: сервис системный (User=codexacct), поэтому лимиты из
+# /etc/systemd/system/user-.slice.d на него НЕ распространяются — они действуют
+# только на пользовательские слайсы. Без этих строк сотрудник с логином к
+# дашборду мог циклом дёргать /api/usage и положить интерактивность всей машине:
+# расчёт периода читает файлы сессий всех пользователей. Под лимит попадает и
+# codex-usage-report.py — запущенный через sudo, он остаётся в cgroup юнита.
+# Второй рубеж (очередь и пауза между расчётами) — в самом codex-usage-account.py.
+CPUAccounting=yes
+CPUQuota=50%
+MemoryAccounting=yes
+MemoryMax=1G
+MemorySwapMax=0
+TasksMax=64
+
 [Install]
 WantedBy=multi-user.target

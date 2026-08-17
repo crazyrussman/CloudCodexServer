@@ -1,8 +1,17 @@
 #!/bin/bash
-# codex-usage-passwd.sh — сменить пароль логина веб-дашборда расхода.
-# Запуск от root:  codex-usage-passwd <логин> [пароль|--stdin]
-#   --stdin - пароль со стандартного ввода (не виден в `ps aux`)
-# Без [пароль] — сгенерирует случайный. Меняет хеш в Caddyfile, валидирует, перезагружает Caddy.
+# codex-usage-passwd.sh — логины и пароли веб-дашборда расхода.
+# Запуск от root:
+#   codex-usage-passwd <логин> [пароль|--stdin]           — сменить пароль существующему
+#   codex-usage-passwd <логин> --create [пароль|--stdin]  — ЗАВЕСТИ новый логин
+#   codex-usage-passwd list                               — перечислить логины
+#
+#   --stdin — пароль со стандартного ввода (не виден в `ps aux`)
+#   Без пароля — сгенерирует случайный.
+#
+# Логины живут в блоке basic_auth файла /etc/caddy/Caddyfile; остальные секции
+# генерирует codex-usage-caddyfile.py, и он сохраняет этот блок как есть.
+# Маршруты дашборда обезличены (`{http.auth.user.id}`, regex `/admin/u/*`) —
+# после заведения логина перегенерировать Caddyfile НЕ нужно.
 set -euo pipefail
 CF=/etc/caddy/Caddyfile
 CRED=/root/codex-usage-credentials.txt
@@ -13,25 +22,61 @@ if [ "${1:-}" = "list" ]; then
 	exit 0
 fi
 
-U="${1:-}"
-[ -n "$U" ] || { echo "Использование: codex-usage-passwd <логин> [пароль]"; echo "Логины:"; grep -oE '^\s+[a-z0-9_-]+\s+\$2' "$CF" | awk '{print "  "$1}'; exit 1; }
-grep -qE "^[[:space:]]+${U}[[:space:]]+\\\$2" "$CF" || { echo "Нет такого логина в дашборде: $U"; exit 1; }
+usage() {
+	echo "Использование:"
+	echo "  codex-usage-passwd <логин> [пароль|--stdin]           сменить пароль"
+	echo "  codex-usage-passwd <логин> --create [пароль|--stdin]  завести новый логин"
+	echo "Логины:"
+	grep -oE '^[[:space:]]+[a-z0-9_-]+[[:space:]]+\$2' "$CF" | awk '{print "  "$1}'
+}
 
-if [ "${2:-}" = "--stdin" ]; then
+U=""; CREATE=0; PWARG=""
+for a in "$@"; do
+	case "$a" in
+		--create) CREATE=1 ;;
+		--stdin)  PWARG="--stdin" ;;
+		--*)      echo "Неизвестный флаг: $a"; usage; exit 1 ;;
+		*)        if [ -z "$U" ]; then U="$a"; else PWARG="$a"; fi ;;
+	esac
+done
+[ -n "$U" ] || { usage; exit 1; }
+
+# есть ли такой логин в блоке basic_auth
+has_login() { grep -qE "^[[:space:]]+${1}[[:space:]]+\\\$2" "$CF"; }
+
+# Любой обрыв ниже возвращает Caddyfile как был: он содержит пароли всех
+# логинов и токен сервиса, испорченный файл кладёт дашборд целиком.
+restore() { [ -f "$CF.bak-passwd" ] && mv -f "$CF.bak-passwd" "$CF"; }
+trap restore ERR
+
+if [ "$CREATE" = "1" ]; then
+	# Логин ОБЯЗАН быть системной учёткой: дашборд сопоставляет его с
+	# /home/<логин> (страница /me) и с cgroup-слайсом. Логин без учётки даёт
+	# пустую страницу «Мой расход» и отсутствие в отчётах — молча.
+	[[ "$U" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || { echo "Недопустимый логин: $U (ожидается ^[a-z][a-z0-9_-]{0,31}\$)"; exit 1; }
+	id "$U" >/dev/null 2>&1 || { echo "В системе нет учётки «$U» — заведите её сначала: codex-add-user.sh $U"; exit 1; }
+	if has_login "$U"; then echo "Логин «$U» в дашборде уже есть — смените пароль без --create"; exit 1; fi
+else
+	has_login "$U" || { echo "Нет такого логина в дашборде: $U"; echo "Завести новый: codex-usage-passwd $U --create"; exit 1; }
+fi
+
+if [ "$PWARG" = "--stdin" ]; then
 	# Пароль читается со стандартного ввода: аргумент командной строки виден
 	# соседям по машине в `ps aux`.
 	IFS= read -r PW || true   # без || true `set -e` оборвёт скрипт на EOF раньше проверки
 	[ -n "$PW" ] || { echo "Пустой пароль на stdin"; exit 1; }
-elif [ -n "${2:-}" ]; then
-	PW="$2"
+elif [ -n "$PWARG" ]; then
+	PW="$PWARG"
 else
 	RAW="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9')"; PW="${RAW:0:14}"
 fi
 H="$(caddy hash-password --plaintext "$PW")"
 
-python3 - "$CF" "$U" "$H" <<'PY'
+cp -a "$CF" "$CF.bak-passwd"   # откат, если Caddy забракует результат
+
+python3 - "$CF" "$U" "$H" "$CREATE" <<'PY'
 import sys, re
-cf, u, h = sys.argv[1], sys.argv[2], sys.argv[3]
+cf, u, h, create = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
 lines = open(cf, encoding='utf-8').read().split('\n')
 out, done = [], False
 for ln in lines:
@@ -40,11 +85,33 @@ for ln in lines:
         out.append(f'{indent}{u} {h}'); done = True
     else:
         out.append(ln)
+
+if create and not done:
+    # Вставляем строку в блок basic_auth перед его закрывающей скобкой.
+    # Отступ берём у соседней записи, иначе — таб-таб, как в шаблоне.
+    start = next((i for i, ln in enumerate(out) if re.match(r'^\s*basic_auth\s*\{', ln)), None)
+    if start is None:
+        sys.exit(3)   # блока нет — молча не трогаем
+    end = next((i for i in range(start + 1, len(out)) if re.match(r'^\s*\}\s*$', out[i])), None)
+    if end is None:
+        sys.exit(3)
+    indent = '\t\t'
+    for i in range(start + 1, end):
+        m = re.match(r'^(\s+)\S+\s+\$2', out[i])
+        if m:
+            indent = m.group(1); break
+    out.insert(end, f'{indent}{u} {h}'); done = True
+
 open(cf, 'w', encoding='utf-8').write('\n'.join(out))
 sys.exit(0 if done else 2)
 PY
 
-caddy validate --config "$CF" --adapter caddyfile >/dev/null 2>&1 || { echo "ОШИБКА: Caddyfile стал невалидным, пароль НЕ применён"; exit 1; }
+if ! caddy validate --config "$CF" --adapter caddyfile >/dev/null 2>&1; then
+	mv -f "$CF.bak-passwd" "$CF"
+	echo "ОШИБКА: Caddyfile стал невалидным — правка отменена, файл возвращён как был"
+	exit 1
+fi
+rm -f "$CF.bak-passwd"
 systemctl reload caddy
 
 # обновить учётку в creds-файле (root-600)
@@ -52,7 +119,15 @@ touch "$CRED"; chmod 600 "$CRED"
 sed -i "/^${U}[[:space:]]/d" "$CRED" 2>/dev/null || true
 printf "%-11s %s\n" "$U" "$PW" >> "$CRED"
 
-echo "Пароль обновлён и применён:"
+if [ "$CREATE" = "1" ]; then
+	echo "Логин заведён:"
+else
+	echo "Пароль обновлён и применён:"
+fi
 echo "  логин:  $U"
 echo "  пароль: $PW"
 echo "(передай сотруднику защищённым каналом; запись также в $CRED)"
+if [ "$CREATE" = "1" ]; then
+	echo "Персональная страница «Мой расход» появится после ближайшей регенерации"
+	echo "(ежечасный крон) либо сразу: /usr/local/sbin/codex-usage-cron.sh"
+fi

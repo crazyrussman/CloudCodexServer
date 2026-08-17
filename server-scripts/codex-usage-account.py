@@ -3,13 +3,39 @@
 # Слушает 127.0.0.1, за Caddy. Личность приходит в X-User (проставляет Caddy после basic_auth),
 # X-Auth-Token защищает от прямого обращения локальных пользователей. Смену пароля применяет
 # проверенный скрипт codex-usage-passwd через узкое sudo. Только stdlib.
-import os, re, html, subprocess, urllib.parse, datetime
+import os, re, html, subprocess, urllib.parse, datetime, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN  = os.environ.get("X_AUTH_TOKEN", "")
 ADMIN  = os.environ.get("USAGE_ADMIN", "admin")
 PORT   = int(os.environ.get("ACCOUNT_PORT", "8781"))
 PASSWD = "/usr/local/sbin/codex-usage-passwd"
+
+# --- защита от самозагрузки машины через /api/usage -------------------------
+# Расчёт периода — самая дорогая операция сервиса: без ledger'а он построчно
+# читает ~/.codex/sessions/**/*.jsonl ВСЕХ пользователей. Сервис системный
+# (codexacct), поэтому пользовательские cgroup-лимиты (user-.slice.d) его НЕ
+# накрывают: любой сотрудник с логином к дашборду мог циклом положить
+# интерактивность всем. Три рубежа: окно, очередь на одного счётчика, пауза.
+HISTORY_DB     = "/var/lib/codex-usage/history.db"   # ledger, см. codex-usage-snapshot.py
+MAX_DAYS       = 92        # с ledger'ом: запечатанные часы читаются из базы
+MAX_DAYS_RAW   = 31        # без ledger'а каждый запрос сканирует все сессии
+REPORT_TIMEOUT = 60
+QUEUE_WAIT     = 3.0       # сколько ждать своей очереди, сек
+MIN_GAP        = 2.0       # не чаще одного расчёта в N сек на пользователя
+_slot   = threading.Semaphore(1)   # тяжёлый расчёт идёт по одному на весь сервис
+_last   = {}                       # логин -> monotonic последнего расчёта
+_last_l = threading.Lock()
+
+def too_soon(u):
+    """True, если этот пользователь запрашивал расчёт только что."""
+    now = time.monotonic()
+    with _last_l:
+        prev = _last.get(u, 0.0)
+        if now - prev < MIN_GAP:
+            return True
+        _last[u] = now
+        return False
 
 USER_RE = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
 PW_RE   = re.compile(r'^[A-Za-z0-9!@#%^&*()_+=.,-]{8,64}$')
@@ -117,15 +143,24 @@ class H(BaseHTTPRequestHandler):
         frm, to = pdt(q.get("from", [""])[0]), pdt(q.get("to", [""])[0])
         if not frm or not to or frm >= to:
             return self._html('<div class="card note">Неверный период.</div>', 400)
-        if (to - frm).days > 92:
-            frm = to - datetime.timedelta(days=92)
+        # Без ledger'а окно жёстче: там нет запечатанных часов, и каждый запрос
+        # читает файлы сессий целиком.
+        cap = MAX_DAYS if os.path.isfile(HISTORY_DB) else MAX_DAYS_RAW
+        if (to - frm).days > cap:
+            frm = to - datetime.timedelta(days=cap)
+        if too_soon(u):
+            return self._html('<div class="card note">Слишком часто. Подожди пару секунд.</div>', 429)
+        if not _slot.acquire(timeout=QUEUE_WAIT):
+            return self._html('<div class="card note">Сервис занят расчётом. Повтори через минуту.</div>', 429)
         try:
             r = subprocess.run(["sudo", "-n", "/usr/local/sbin/codex-usage-report.py", "--fragment",
                                 "--as", u, "--view", view, "--from", frm.isoformat(), "--to", to.isoformat()],
-                               capture_output=True, text=True, timeout=120)
+                               capture_output=True, text=True, timeout=REPORT_TIMEOUT)
             body = r.stdout if r.returncode == 0 else '<div class="card note">Ошибка расчёта периода.</div>'
         except Exception:
             body = '<div class="card note">Слишком долго. Попробуй меньший период.</div>'
+        finally:
+            _slot.release()
         self._html(body)
 
     def do_GET(self):
