@@ -1,6 +1,7 @@
 #!/bin/bash
 # codex-usage-passwd.sh — сменить пароль логина дашборда (codex.example.com).
-# Запуск от root:  codex-usage-passwd <логин> [пароль]
+# Запуск от root:  codex-usage-passwd <логин> [пароль|--stdin]
+#   --stdin - пароль со стандартного ввода (не виден в `ps aux`)
 # Без [пароль] — сгенерирует случайный. Меняет хеш в Caddyfile, валидирует, перезагружает Caddy.
 set -euo pipefail
 CF=/etc/caddy/Caddyfile
@@ -16,7 +17,12 @@ U="${1:-}"
 [ -n "$U" ] || { echo "Использование: codex-usage-passwd <логин> [пароль]"; echo "Логины:"; grep -oE '^\s+[a-z0-9_-]+\s+\$2' "$CF" | awk '{print "  "$1}'; exit 1; }
 grep -qE "^[[:space:]]+${U}[[:space:]]+\\\$2" "$CF" || { echo "Нет такого логина в дашборде: $U"; exit 1; }
 
-if [ -n "${2:-}" ]; then
+if [ "${2:-}" = "--stdin" ]; then
+	# Пароль читается со стандартного ввода: аргумент командной строки виден
+	# соседям по машине в `ps aux`.
+	IFS= read -r PW
+	[ -n "$PW" ] || { echo "Пустой пароль на stdin"; exit 1; }
+elif [ -n "${2:-}" ]; then
 	PW="$2"
 else
 	RAW="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9')"; PW="${RAW:0:14}"

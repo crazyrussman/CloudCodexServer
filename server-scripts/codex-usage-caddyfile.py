@@ -5,6 +5,8 @@ import re, os
 CF = "/etc/caddy/Caddyfile"
 ENV = "/etc/codex-usage-account.env"
 ACCPORT = "8781"
+# Логин администратора дашборда: только он видит имена и проекты.
+ADMIN = os.environ.get("USAGE_ADMIN", "admin")
 
 def read_env(key):
     try:

@@ -1,0 +1,13 @@
+# Узкий sudoers для сервиса «Аккаунт» дашборда.
+# Файл: /etc/sudoers.d/codex-usage-account   (права 0440, владелец root:root)
+#
+# Установка — ТОЛЬКО через visudo, иначе синтаксическая ошибка ломает sudo
+# на всей машине:
+#   visudo -c -f server-scripts/sudoers-codex-usage-account   # проверить
+#   install -m 0440 -o root -g root server-scripts/sudoers-codex-usage-account \
+#           /etc/sudoers.d/codex-usage-account
+#
+# Разрешены ровно две команды и ничего больше. Пароль в codex-usage-passwd
+# передаётся через stdin (флаг --stdin), а не аргументом: аргументы командной
+# строки видны любому пользователю машины в `ps aux`.
+codexacct ALL=(root) NOPASSWD: /usr/local/sbin/codex-usage-passwd, /usr/local/sbin/codex-usage-report.py

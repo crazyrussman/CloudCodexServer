@@ -52,7 +52,9 @@ def set_password(user, pw):
     if not PW_RE.match(pw or ""):
         return False, "Пароль: 8–64 символа (буквы, цифры, спецсимволы)."
     try:
-        r = subprocess.run(["sudo", "-n", PASSWD, user, pw], capture_output=True, text=True, timeout=30)
+        # Пароль уходит через stdin, а не аргументом: аргументы видны соседям в `ps aux`.
+        r = subprocess.run(["sudo", "-n", PASSWD, user, "--stdin"], input=pw + "\n",
+                           capture_output=True, text=True, timeout=30)
         if r.returncode == 0:
             return True, f"Пароль для «{user}» изменён. Войди заново с новым паролем."
         return False, "Ошибка применения: " + ((r.stderr or r.stdout).strip()[:200] or "unknown")

@@ -132,9 +132,12 @@ cron-задачи (§4, §4.6). Расход, ротация и блокиров
 
 Скопируйте все скрипты из репозитория [`server-scripts/`](server-scripts/) на сервер:
 ```bash
-scp server-scripts/*.sh codex-server-root:/usr/local/sbin/
-scp server-scripts/restic-excludes.txt codex-server-root:/tmp/
-ssh codex-server-root 'chmod 755 /usr/local/sbin/codex-*.sh /usr/local/sbin/tg-send.sh'
+scp server-scripts/*.sh server-scripts/*.py <SERVER>:/usr/local/sbin/
+scp server-scripts/restic-excludes.txt <SERVER>:/tmp/
+ssh <SERVER> 'chmod 755 /usr/local/sbin/codex-*.sh /usr/local/sbin/codex-*.py /usr/local/sbin/tg-send.sh'
+
+# ВАЖНО: сервис «Аккаунт» зовёт скрипт без расширения — переименуйте при установке
+ssh <SERVER> 'mv /usr/local/sbin/codex-usage-passwd.sh /usr/local/sbin/codex-usage-passwd'
 ```
 Базовый набор: `codex-add-user.sh`, `codex-backup.sh`, `codex-monitor.sh`,
 `codex-autoreboot.sh`, `codex-docker-prune.sh`, `codex-hungjob-reaper.sh`, `tg-send.sh`.
@@ -315,33 +318,79 @@ DRY_RUN=1 /usr/local/sbin/codex-hungjob-reaper.sh   # прогон вхолос�
 Показывает, кто сколько потребляет, с разбивкой по проектам. Нужен домен,
 указывающий на сервер.
 
+**1. Пакет, учётка, каталоги.**
 ```bash
 apt-get install -y caddy
-# скрипты дашборда уже скопированы в /usr/local/sbin на шаге 4
-chmod 755 /usr/local/sbin/codex-usage-*
-
-# служебная учётка для сервиса смены паролей
 useradd -r -s /usr/sbin/nologin codexacct
 install -d -m700 -o codexacct -g codexacct /var/lib/codex-usage
 install -d -m700 -o caddy -g caddy /var/www/codex-usage
+```
+⚠️ **Webroot закрыт намеренно** (`drwx------ caddy`): у сотрудников есть shell,
+и при открытых правах они прочитают чужие страницы файлом мимо Caddy.
 
-# домен, почта и логины задаются внутри генератора конфига
-python3 /usr/local/sbin/codex-usage-caddyfile.py
+**2. Секрет сервиса «Аккаунт».** Генератор конфига добавит роут `/account`,
+только если этот файл существует:
+```bash
+umask 077
+printf 'X_AUTH_TOKEN=%s\n' "$(openssl rand -hex 24)" > /etc/codex-usage-account.env
+chmod 600 /etc/codex-usage-account.env
+```
+
+**3. Стартовый Caddyfile.** Генератор не создаёт конфиг с нуля — он *правит*
+существующий, сохраняя логины и хеши, и откажется работать, если не найдёт ни
+одной строки `basic_auth` с bcrypt-хешем. Поэтому первый логин заводится вручную:
+```bash
+sed 's/codex\.example\.com/<ВАШ_ДОМЕН>/' server-scripts/Caddyfile.codex-usage \
+  > /etc/caddy/Caddyfile
+# заменить плейсхолдер __HASH_admin__ настоящим хешем
+caddy hash-password --plaintext '<ПАРОЛЬ_АДМИНА>'      # скопировать вывод
+sed -i 's|__HASH_admin__|<ВСТАВИТЬ_ХЕШ>|' /etc/caddy/Caddyfile
+sed -i '/__HASH_/d' /etc/caddy/Caddyfile                # убрать оставшиеся заготовки
+```
+
+🔴 **Права на Caddyfile — обязательно.** В него пишется `X-Auth-Token` открытым
+текстом и bcrypt-хеши всех логинов. При дефолтных `0644` любой сотрудник (а shell
+у них есть по дизайну) читает токен и обращается к сервису напрямую в обход
+basic-auth — это полный захват админки дашборда и сброс любого пароля:
+```bash
+chown root:caddy /etc/caddy/Caddyfile && chmod 640 /etc/caddy/Caddyfile
+```
+
+**4. Сервис «Аккаунт» и его права.**
+```bash
+install -m644 server-scripts/codex-usage-account.service /etc/systemd/system/
+# sudoers ставить только через visudo-проверку: ошибка ломает sudo на всей машине
+visudo -c -f server-scripts/sudoers-codex-usage-account
+install -m0440 -o root -g root server-scripts/sudoers-codex-usage-account \
+        /etc/sudoers.d/codex-usage-account
+systemctl daemon-reload && systemctl enable --now codex-usage-account
+systemctl is-active codex-usage-account       # active
+```
+
+**5. Генерация конфига и расписание.**
+```bash
+USAGE_ADMIN=<логин_админа> python3 /usr/local/sbin/codex-usage-caddyfile.py
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl reload caddy
 
-# сбор данных: ledger в :50, рендер в :00
 cat > /etc/cron.d/codex-usage <<'EOF'
 50 * * * * root /usr/local/sbin/codex-usage-snapshot.py
 0  * * * * root /usr/local/sbin/codex-usage-cron.sh
 EOF
 ```
 
-Администратор дашборда задаётся в `codex-usage-cron.sh` (`USAGE_ADMIN`) — только
-он видит имена и проекты, остальным общий борд отдаётся обезличенным. Пароли
-логинов заводятся командой `codex-usage-passwd <логин>`.
+Администратор дашборда задаётся переменной `USAGE_ADMIN` (в `codex-usage-cron.sh`
+и при запуске генератора) — только он видит имена и проекты, остальным общий борд
+отдаётся обезличенным. Логины заводятся командой `codex-usage-passwd <логин>`;
+пароль можно передать через stdin (`codex-usage-passwd ivan --stdin`), чтобы он не
+светился в `ps aux`.
 
-⚠️ **Webroot должен быть закрыт** (`drwx------ caddy`): у сотрудников есть shell,
-и при открытых правах они прочитают чужие страницы файлом мимо Caddy.
+**Приёмка:**
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://<ВАШ_ДОМЕН>/     # 401 — basic-auth жив
+curl -s -u <логин>:<пароль> https://<ВАШ_ДОМЕН>/ | head -5         # HTML борда
+sudo -u <любой_сотрудник> test -r /etc/caddy/Caddyfile && echo 'ОПАСНО: читает' || echo 'ок'
+```
 
 ⚠️ Дашборд — **прокси по логам, а не биллинг**, и проект определяется по рабочему
 каталогу сессии. Ограничения описаны в [DOCUMENTATION.md](DOCUMENTATION.md).
@@ -456,7 +505,8 @@ sudo -n true                             # запрещено — OK
 | `/etc/cron.d/codex-*` | расписания (backup, monitor, autoreboot, reaper, usage, auth-sync) |
 | `/etc/systemd/system/user-*.slice.d/` | лимиты памяти, свопа и CPU |
 | `/etc/tmpfiles.d/tmp.conf`, `/etc/login.defs` | политика `/tmp` и umask |
-| `/etc/caddy/Caddyfile`, `/etc/codex-usage-account.env`, `/root/codex-usage-credentials.txt` | дашборд: конфиг и креды (**внесите в бэкап**) |
+| `/etc/caddy/Caddyfile` (**640 root:caddy**), `/etc/codex-usage-account.env`, `/root/codex-usage-credentials.txt` | дашборд: конфиг и креды (**внесите в бэкап**) |
+| `/etc/systemd/system/codex-usage-account.service`, `/etc/sudoers.d/codex-usage-account` | сервис «Аккаунт» дашборда |
 | `/etc/apt/apt.conf.d/20auto-upgrades`, `52codex-noreboot.conf` | автообновления |
 | `/etc/ssh/sshd_config.d/00-hardening.conf` | безопасность SSH |
 | `/etc/sudoers.d/*`, `/etc/sysctl.d/99-codex-swap.conf` | sudo, swap |

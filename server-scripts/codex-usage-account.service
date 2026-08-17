@@ -1,0 +1,30 @@
+# Сервис «Аккаунт» дашборда расхода — страница смены собственного пароля.
+# Файл: /etc/systemd/system/codex-usage-account.service
+#
+# Слушает только 127.0.0.1 — наружу его публикует Caddy, который добавляет
+# заголовки X-User (из basic_auth) и X-Auth-Token (общий секрет).
+# Сам пароль меняет не сервис, а codex-usage-passwd под sudo — см.
+# sudoers-codex-usage-account.
+[Unit]
+Description=CloudCodexServer usage dashboard - account service
+After=network.target
+
+[Service]
+Type=simple
+User=codexacct
+Group=codexacct
+EnvironmentFile=/etc/codex-usage-account.env
+ExecStart=/usr/bin/python3 /usr/local/sbin/codex-usage-account.py
+Restart=on-failure
+RestartSec=5
+
+# Минимальные привилегии: сервису нужен только сетевой сокет на loopback
+# и право звать два скрипта через sudo.
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/codex-usage
+
+[Install]
+WantedBy=multi-user.target
