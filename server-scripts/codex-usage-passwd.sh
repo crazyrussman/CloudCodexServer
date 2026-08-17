@@ -117,9 +117,9 @@ if ! systemctl reload caddy; then
 	restore
 	echo "ОШИБКА: Caddy не перечитал конфиг — правка отменена, файл возвращён как был."
 	echo "  Диагностика: systemctl status caddy"
-	echo "  Частая причина: у сервиса с PrivateTmp=yes уборщик снёс /tmp/systemd-private-*"
-	echo "  (status=226/NAMESPACE). Лечится: systemctl restart caddy — и добавьте в"
-	echo "  /etc/tmpfiles.d/tmp.conf строки 'x /tmp/systemd-private-%b-*'."
+	echo "  Частая причина: удалён каталог /tmp/systemd-private-*-caddy.service-*"
+	echo "  (обычно ручной чисткой /tmp) — в журнале status=226/NAMESPACE."
+	echo "  Лечится: systemctl restart caddy"
 	exit 1
 fi
 rm -f "$CF.bak-passwd"
