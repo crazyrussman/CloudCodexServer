@@ -23,9 +23,10 @@ codex.example.com {
 	# --- аутентификация: логины = системные имена, пароли bcrypt ---
 	# ВНИМАНИЕ: хеши подставляются генератором (см. deploy). Плейсхолдеры ниже.
 	basic_auth {
-		# По одной строке на сотрудника. Логин = системное имя, хеш bcrypt
-		# подставляет генератор codex-usage-caddyfile.py — руками не править.
-		admin      __HASH_admin__
+		# По одной строке на сотрудника. Логин ОБЯЗАН быть системной учёткой:
+		# дашборд сопоставляет его с /home/<логин> и с cgroup-слайсом.
+		# Хеш bcrypt подставляет генератор codex-usage-caddyfile.py — не править руками.
+		# coder существует с §3; остальных добавит codex-usage-passwd после §5.
 		coder      __HASH_coder__
 		# ivan     __HASH_ivan__
 	}
@@ -43,7 +44,7 @@ codex.example.com {
 	@admin path /admin /admin/
 	handle @admin {
 		route {
-			@denied expression {http.auth.user.id} != "admin"
+			@denied expression {http.auth.user.id} != "coder"
 			respond @denied "403 — доступ только у администратора" 403
 			rewrite * /private/admin/index.html
 			file_server

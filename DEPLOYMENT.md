@@ -333,13 +333,19 @@ install -d -m700 -o caddy -g caddy /var/www/codex-usage
 его отсюда; без него администратором будет считаться логин `admin`, форма сброса
 паролей не покажется, а `/api/usage?view=admin` вернёт 403 настоящему админу.
 
+`USAGE_ADMIN` — это **системная учётка**, а не отдельный веб-логин: дашборд
+сопоставляет её с `/home/<логин>` и с cgroup-слайсом. На этом шаге в системе
+существует только `coder` (заведён в §3) — постоянный администратор появится
+позже, в §5 (`codex-add-user.sh <логин> admin`). Поэтому либо оставьте `coder`
+и смените переменную после §5, либо разверните дашборд целиком после §5.
+
 ⚠️ Впишите логин **значением переменной**, а не угловыми скобками. Файл читают
 два разных парсера: systemd принимает любую строку буквально (сервис поднимется
 с логином `<логин_админа>` и приёмка пройдёт), а разбор в `codex-usage-cron.sh`
 на заготовке остановится с ошибкой — почасовая регенерация встанет молча:
 ```bash
 umask 077
-ADMIN_LOGIN=admin        # <-- впишите логин администратора дашборда
+ADMIN_LOGIN=coder        # <-- системная учётка администратора дашборда
 cat > /etc/codex-usage-account.env <<EOF
 X_AUTH_TOKEN=$(openssl rand -hex 24)
 ACCOUNT_PORT=8781
@@ -356,9 +362,9 @@ grep -v '^X_AUTH_TOKEN=' /etc/codex-usage-account.env   # проверьте, ч
 sed 's/codex\.example\.com/<ВАШ_ДОМЕН>/' /tmp/server-scripts/Caddyfile.codex-usage \
   > /etc/caddy/Caddyfile
 sed -i 's|__ACME_EMAIL__|<ПОЧТА_ДЛЯ_ACME>|' /etc/caddy/Caddyfile
-# заменить плейсхолдер __HASH_admin__ настоящим хешем
+# первый логин = тот же, что в USAGE_ADMIN (по умолчанию coder)
 caddy hash-password --plaintext '<ПАРОЛЬ_АДМИНА>'      # скопировать вывод
-sed -i 's|__HASH_admin__|<ВСТАВИТЬ_ХЕШ>|' /etc/caddy/Caddyfile
+sed -i 's|__HASH_coder__|<ВСТАВИТЬ_ХЕШ>|' /etc/caddy/Caddyfile
 sed -i '/__HASH_/d' /etc/caddy/Caddyfile                # убрать оставшиеся заготовки
 ```
 
@@ -410,8 +416,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<ВАШ_ДОМЕН>/     # 401 
 curl -s -u <логин>:<пароль> https://<ВАШ_ДОМЕН>/ | head -5         # HTML борда
 sudo -u <любой_сотрудник> test -r /etc/caddy/Caddyfile && echo 'ОПАСНО: читает' || echo 'ок'
 /usr/local/sbin/codex-usage-cron.sh && echo 'регенерация прошла'   # ловит незаданный USAGE_ADMIN
-id "$(sed -n 's/^USAGE_ADMIN=//p' /etc/codex-usage-account.env)" >/dev/null \
-  && echo 'админ дашборда — существующая учётка'
+
+# админ дашборда обязан быть существующей системной учёткой
+A=$(sed -n 's/^USAGE_ADMIN=//p' /etc/codex-usage-account.env)
+if id "$A" >/dev/null 2>&1; then echo "админ дашборда: $A — учётка есть"
+else echo "ВНИМАНИЕ: учётки '$A' нет. Заведите её в §5 и обновите USAGE_ADMIN"; fi
 ```
 
 ⚠️ Дашборд — **прокси по логам, а не биллинг**, и проект определяется по рабочему
