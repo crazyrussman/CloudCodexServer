@@ -86,7 +86,7 @@ fi
 MSG="⏳ CloudCodexServer: общий Codex-токен умрёт через ~${LEFT_H}ч (${EXP_HUMAN}).
 
 Перевыпустите ЗАРАНЕЕ, в удобное время — иначе команда встанет:
-  ssh codex-server-root
+  ssh <SERVER>
   sudo codex-reauth.sh
 
 Нужен браузерный шаг под общим аккаунтом (~1 мин).

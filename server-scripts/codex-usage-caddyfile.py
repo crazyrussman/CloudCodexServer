@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-# Регенерирует /etc/caddy/Caddyfile для codex.example.com, СОХРАНЯЯ логины/хеши basic_auth.
+# Регенерирует /etc/caddy/Caddyfile, СОХРАНЯЯ логины и хеши basic_auth.
+# Домен, ACME-почта и админ берутся из окружения (USAGE_DOMAIN, ACME_EMAIL, USAGE_ADMIN).
 # Секрет для сервиса «Аккаунт» берёт из /etc/codex-usage-account.env (если есть — добавляет роут /account).
 import re, os
 CF = "/etc/caddy/Caddyfile"
+# Домен и ACME-контакт НЕ хардкодятся: example.com зарезервирован RFC 2606,
+# и ZeroSSL (запасной УЦ Caddy при отказе Let's Encrypt) такой контакт отвергает.
+DOMAIN = os.environ.get("USAGE_DOMAIN", "")
+ACME_EMAIL = os.environ.get("ACME_EMAIL", "")
 ENV = "/etc/codex-usage-account.env"
 ACCPORT = "8781"
 # Логин администратора дашборда: только он видит имена и проекты.
@@ -16,6 +21,14 @@ def read_env(key):
     except FileNotFoundError:
         pass
     return ""
+
+if not DOMAIN or not ACME_EMAIL:
+    raise SystemExit(
+        "Задайте окружение перед запуском:\n"
+        "  USAGE_DOMAIN=codex.вашдомен.ru ACME_EMAIL=admin@вашдомен.ru \\\n"
+        "  USAGE_ADMIN=<логин_админа> python3 codex-usage-caddyfile.py\n"
+        "Почта на example.com не подойдёт: домен зарезервирован RFC 2606."
+    )
 
 SECRET = read_env("X_AUTH_TOKEN")
 txt = open(CF, encoding="utf-8").read()
@@ -34,10 +47,10 @@ acc = (f"""\t@account path /account /account/* /api/*
 """ if SECRET else "")
 
 new = f"""{{
-\temail admin@example.com
+\temail {ACME_EMAIL}
 }}
 
-codex.example.com {{
+{DOMAIN} {{
 \troot * /var/www/codex-usage
 \tencode gzip
 \tlog {{

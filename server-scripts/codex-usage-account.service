@@ -18,13 +18,21 @@ ExecStart=/usr/bin/python3 /usr/local/sbin/codex-usage-account.py
 Restart=on-failure
 RestartSec=5
 
-# Минимальные привилегии: сервису нужен только сетевой сокет на loopback
-# и право звать два скрипта через sudo.
+# Песочница. ВАЖНО: namespace наследуется потомками, включая запущенный через
+# sudo codex-usage-passwd — поэтому в ReadWritePaths должно быть всё, что нужно
+# ЕМУ, а не только самому сервису:
+#   /etc/caddy    — правит Caddyfile (иначе EROFS и смена пароля падает)
+#   /root         — пишет codex-usage-credentials.txt
+#   /run/systemd  — `systemctl reload caddy` ходит в /run/systemd/private
+# ProtectHome=no обязателен: codex-usage-report.py читает ~/.codex/sessions всех
+# пользователей, а под ProtectHome=yes каталог /home виден пустым — дашборд
+# молча теряет свежие часы и показывает только данные из ledger.
+# ProtectHome=read-only не подходит: он перекрывает ReadWritePaths=/root.
 NoNewPrivileges=no
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/codex-usage
+ProtectHome=no
+ReadWritePaths=/var/lib/codex-usage /etc/caddy /root /run/systemd
 
 [Install]
 WantedBy=multi-user.target

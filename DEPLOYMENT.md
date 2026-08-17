@@ -37,7 +37,7 @@ sshd -t && systemctl reload ssh
 
 Локально в `~/.ssh/config`:
 ```
-Host codex-server-root
+Host <SERVER>
     HostName SERVER_IP
     User root
     IdentityFile ~/.ssh/codex_server
@@ -132,11 +132,10 @@ cron-задачи (§4, §4.6). Расход, ротация и блокиров
 
 Скопируйте все скрипты из репозитория [`server-scripts/`](server-scripts/) на сервер:
 ```bash
-scp server-scripts/*.sh server-scripts/*.py <SERVER>:/usr/local/sbin/
-scp server-scripts/restic-excludes.txt <SERVER>:/tmp/
-ssh <SERVER> 'chmod 755 /usr/local/sbin/codex-*.sh /usr/local/sbin/codex-*.py /usr/local/sbin/tg-send.sh'
-
-# ВАЖНО: сервис «Аккаунт» зовёт скрипт без расширения — переименуйте при установке
+# Копируем каталог ЦЕЛИКОМ: кроме скриптов там systemd-юнит, sudoers,
+# шаблон Caddyfile и conf-файлы — они понадобятся в §4.4 и §4.5.
+scp -r server-scripts <SERVER>:/tmp/
+ssh <SERVER> 'install -m755 /tmp/server-scripts/*.sh /tmp/server-scripts/*.py /usr/local/sbin/'
 ssh <SERVER> 'mv /usr/local/sbin/codex-usage-passwd.sh /usr/local/sbin/codex-usage-passwd'
 ```
 Базовый набор: `codex-add-user.sh`, `codex-backup.sh`, `codex-monitor.sh`,
@@ -158,7 +157,7 @@ touch /var/log/codex-auth-sync.log
 дешевле и для ночных бэкапов подходит). Подставьте свои endpoint и регион:
 ```bash
 install -d -m700 /etc/restic
-mv /tmp/restic-excludes.txt /etc/restic/excludes.txt ; chmod 600 /etc/restic/excludes.txt
+mv /tmp/server-scripts/restic-excludes.txt /etc/restic/excludes.txt ; chmod 600 /etc/restic/excludes.txt
 cat > /etc/restic/env <<EOF
 export AWS_ACCESS_KEY_ID="<S3_ACCESS_KEY>"
 export AWS_SECRET_ACCESS_KEY="<S3_SECRET_KEY>"
@@ -297,7 +296,7 @@ Telegram, эскалирует после 5 откладываний.
 памяти неограниченно долго. Жнец снимает такие процессы деревом.
 
 ```bash
-cp server-scripts/codex-hungjob-blocklist.conf /etc/codex-hungjob-blocklist.conf
+cp /tmp/server-scripts/codex-hungjob-blocklist.conf /etc/codex-hungjob-blocklist.conf
 chmod 644 /etc/codex-hungjob-blocklist.conf     # по умолчанию запретов нет
 cat > /etc/cron.d/codex-hungjob-reaper <<'EOF'
 */2 * * * * root /usr/local/sbin/codex-hungjob-reaper.sh
@@ -328,11 +327,18 @@ install -d -m700 -o caddy -g caddy /var/www/codex-usage
 ⚠️ **Webroot закрыт намеренно** (`drwx------ caddy`): у сотрудников есть shell,
 и при открытых правах они прочитают чужие страницы файлом мимо Caddy.
 
-**2. Секрет сервиса «Аккаунт».** Генератор конфига добавит роут `/account`,
-только если этот файл существует:
+**2. Окружение сервиса «Аккаунт».** Генератор добавит роут `/account`, только
+если этот файл существует. `USAGE_ADMIN` обязателен именно здесь — сервис читает
+его отсюда; без него администратором будет считаться логин `admin`, форма сброса
+паролей не покажется, а `/api/usage?view=admin` вернёт 403 настоящему админу:
 ```bash
 umask 077
-printf 'X_AUTH_TOKEN=%s\n' "$(openssl rand -hex 24)" > /etc/codex-usage-account.env
+cat > /etc/codex-usage-account.env <<'EOF'
+X_AUTH_TOKEN=ЗАМЕНИТЬ
+ACCOUNT_PORT=8781
+USAGE_ADMIN=<логин_админа>
+EOF
+sed -i "s|^X_AUTH_TOKEN=.*|X_AUTH_TOKEN=$(openssl rand -hex 24)|" /etc/codex-usage-account.env
 chmod 600 /etc/codex-usage-account.env
 ```
 
@@ -340,7 +346,7 @@ chmod 600 /etc/codex-usage-account.env
 существующий, сохраняя логины и хеши, и откажется работать, если не найдёт ни
 одной строки `basic_auth` с bcrypt-хешем. Поэтому первый логин заводится вручную:
 ```bash
-sed 's/codex\.example\.com/<ВАШ_ДОМЕН>/' server-scripts/Caddyfile.codex-usage \
+sed 's/codex\.example\.com/<ВАШ_ДОМЕН>/' /tmp/server-scripts/Caddyfile.codex-usage \
   > /etc/caddy/Caddyfile
 # заменить плейсхолдер __HASH_admin__ настоящим хешем
 caddy hash-password --plaintext '<ПАРОЛЬ_АДМИНА>'      # скопировать вывод
@@ -358,10 +364,10 @@ chown root:caddy /etc/caddy/Caddyfile && chmod 640 /etc/caddy/Caddyfile
 
 **4. Сервис «Аккаунт» и его права.**
 ```bash
-install -m644 server-scripts/codex-usage-account.service /etc/systemd/system/
+install -m644 /tmp/server-scripts/codex-usage-account.service /etc/systemd/system/
 # sudoers ставить только через visudo-проверку: ошибка ломает sudo на всей машине
-visudo -c -f server-scripts/sudoers-codex-usage-account
-install -m0440 -o root -g root server-scripts/sudoers-codex-usage-account \
+visudo -c -f /tmp/server-scripts/sudoers-codex-usage-account
+install -m0440 -o root -g root /tmp/server-scripts/sudoers-codex-usage-account \
         /etc/sudoers.d/codex-usage-account
 systemctl daemon-reload && systemctl enable --now codex-usage-account
 systemctl is-active codex-usage-account       # active
@@ -369,7 +375,8 @@ systemctl is-active codex-usage-account       # active
 
 **5. Генерация конфига и расписание.**
 ```bash
-USAGE_ADMIN=<логин_админа> python3 /usr/local/sbin/codex-usage-caddyfile.py
+USAGE_DOMAIN=<ВАШ_ДОМЕН> ACME_EMAIL=<почта_для_ACME> USAGE_ADMIN=<логин_админа> \
+  python3 /usr/local/sbin/codex-usage-caddyfile.py
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl reload caddy
 
@@ -379,8 +386,11 @@ cat > /etc/cron.d/codex-usage <<'EOF'
 EOF
 ```
 
-Администратор дашборда задаётся переменной `USAGE_ADMIN` (в `codex-usage-cron.sh`
-и при запуске генератора) — только он видит имена и проекты, остальным общий борд
+Домен и ACME-почта задаются окружением — без них генератор откажется работать,
+чтобы не прописать заведомо нерабочий контакт (`example.com` зарезервирован
+RFC 2606 и отвергается ZeroSSL, запасным удостоверяющим центром Caddy).
+`USAGE_ADMIN` нужен в трёх местах: env сервиса (шаг 2), `codex-usage-cron.sh`
+и запуск генератора. Администратор — только он видит имена и проекты, остальным общий борд
 отдаётся обезличенным. Логины заводятся командой `codex-usage-passwd <логин>`;
 пароль можно передать через stdin (`codex-usage-passwd ivan --stdin`), чтобы он не
 светился в `ps aux`.
