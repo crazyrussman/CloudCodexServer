@@ -107,12 +107,22 @@ sys.exit(0 if done else 2)
 PY
 
 if ! caddy validate --config "$CF" --adapter caddyfile >/dev/null 2>&1; then
-	mv -f "$CF.bak-passwd" "$CF"
+	restore
 	echo "ОШИБКА: Caddyfile стал невалидным — правка отменена, файл возвращён как был"
 	exit 1
 fi
+# Бэкап снимаем ТОЛЬКО после успешного reload. Конфиг, лежащий на диске, но не
+# перечитанный Caddy, — это пароль, который «уже сменён», а войти с ним нельзя.
+if ! systemctl reload caddy; then
+	restore
+	echo "ОШИБКА: Caddy не перечитал конфиг — правка отменена, файл возвращён как был."
+	echo "  Диагностика: systemctl status caddy"
+	echo "  Частая причина: у сервиса с PrivateTmp=yes уборщик снёс /tmp/systemd-private-*"
+	echo "  (status=226/NAMESPACE). Лечится: systemctl restart caddy — и добавьте в"
+	echo "  /etc/tmpfiles.d/tmp.conf строки 'x /tmp/systemd-private-%b-*'."
+	exit 1
+fi
 rm -f "$CF.bak-passwd"
-systemctl reload caddy
 
 # обновить учётку в creds-файле (root-600)
 touch "$CRED"; chmod 600 "$CRED"

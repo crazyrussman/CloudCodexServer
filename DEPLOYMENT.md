@@ -251,7 +251,30 @@ systemctl daemon-reload
 # /tmp: протухание 30д -> 10д (имя файла совпадает с системным = замена)
 cat > /etc/tmpfiles.d/tmp.conf <<'EOF'
 D /tmp 1777 root root 10d
+# не трогать приватные /tmp сервисов (PrivateTmp=yes) — см. предупреждение ниже
+x /tmp/systemd-private-%b-*
+X /tmp/systemd-private-%b-*/tmp
 EOF
+```
+
+🔴 **Две строки `systemd-private` — не украшение.** Юнит с `PrivateTmp=yes`
+получает при старте каталог `/tmp/systemd-private-<boot>-<юнит>-<rnd>`. Пока
+сервис работает, туда никто не заглядывает — метки времени стареют, и уборщик
+сносит каталог как обычный мусор. Сервис продолжает работать (namespace уже
+смонтирован), но любая команда, выполняемая **внутри** его namespace, падает:
+```
+systemctl reload caddy
+  caddy.service: Failed to set up mount namespacing: /tmp: No such file or directory
+  caddy.service: Control process exited, code=exited, status=226/NAMESPACE
+```
+Чинится только перезапуском сервиса, а обнаруживается в худший момент — когда
+понадобилось перечитать конфиг. Чем короче срок протухания, тем раньше выстрелит:
+при `10d` — после десяти дней аптайма сервиса. В штатном файле Ubuntu этих строк
+нет, в RHEL/Fedora — есть. Проверка (при аптайме сервисов больше срока каталоги
+обязаны существовать):
+```bash
+ls -d /tmp/systemd-private-* 2>/dev/null | wc -l   # 0 при живых PrivateTmp-сервисах = уже снесены
+systemctl show caddy -p PrivateTmp --value
 ```
 
 `daemon-reload` подхватывает лимиты и живыми слайсами — перезапускать сессии
